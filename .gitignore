@@ -1,0 +1,14 @@
+# Binaries
+agentchat-relay
+agentchat-tui
+agentchat-mcp
+*.exe
+
+# Go build
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp

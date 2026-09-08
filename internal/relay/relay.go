@@ -1,0 +1,274 @@
+// Package relay provides the HTTP + WebSocket relay server for AgentChat.
+package relay
+
+import (
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/biodoia/agentchat/internal/chat"
+	"github.com/biodoia/agentchat/internal/notify"
+	"github.com/biodoia/agentchat/pkg/types"
+	"github.com/gorilla/websocket"
+)
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// Server is the AgentChat relay HTTP server.
+type Server struct {
+	hub  *chat.Hub
+	log  *slog.Logger
+	mux  *http.ServeMux
+	addr string
+}
+
+// New creates a relay server.
+func New(addr string, log *slog.Logger) *Server {
+	s := &Server{
+		hub:  chat.NewHub(),
+		log:  log,
+		mux:  http.NewServeMux(),
+		addr: addr,
+	}
+	s.routes()
+	return s
+}
+
+func (s *Server) routes() {
+	// REST API
+	s.mux.HandleFunc("POST /api/message", s.handleSendMessage)
+	s.mux.HandleFunc("GET /api/messages", s.handleGetMessages)
+	s.mux.HandleFunc("POST /api/group/join", s.handleJoinGroup)
+	s.mux.HandleFunc("POST /api/group/leave", s.handleLeaveGroup)
+	s.mux.HandleFunc("GET /api/groups", s.handleListGroups)
+	s.mux.HandleFunc("POST /api/agent/register", s.handleRegisterAgent)
+	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+
+	// WebSocket for real-time
+	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
+
+	// Agent Card (A2A discovery)
+	s.mux.HandleFunc("GET /.well-known/agent.json", s.handleAgentCard)
+}
+
+// ListenAndServe starts the relay server.
+func (s *Server) ListenAndServe() error {
+	s.log.Info("AgentChat relay starting", "addr", s.addr)
+	return http.ListenAndServe(s.addr, s.mux)
+}
+
+// --- REST Handlers ---
+
+func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Group    string          `json:"group"`
+		Sender   string          `json:"sender"`
+		Body     string          `json:"body"`
+		Priority types.Priority  `json:"priority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Group == "" {
+		req.Group = "general"
+	}
+	if req.Priority == "" {
+		req.Priority = types.PriorityNormal
+	}
+
+	msg := s.hub.SendMessage(req.Group, req.Sender, req.Body, req.Priority)
+
+	// Send desktop notification
+	if req.Priority == types.PriorityStealFocus {
+		notify.StealFocus(req.Sender, req.Body)
+	} else {
+		notify.ChatMessage(req.Sender, req.Body, "")
+	}
+
+	s.log.Info("message", "group", msg.Group, "sender", msg.Sender, "body", truncate(msg.Body, 60))
+	writeJSON(w, msg)
+}
+
+func (s *Server) handleGetMessages(w http.ResponseWriter, r *http.Request) {
+	group := r.URL.Query().Get("group")
+	if group == "" {
+		group = "general"
+	}
+	since := r.URL.Query().Get("since")
+	var sinceT time.Time
+	if since != "" {
+		var err error
+		sinceT, err = time.Parse(time.RFC3339, since)
+		if err != nil {
+			sinceT = time.Now().Add(-24 * time.Hour)
+		}
+	} else {
+		sinceT = time.Now().Add(-24 * time.Hour)
+	}
+
+	msgs := s.hub.GetMessages(group, sinceT, 100)
+	writeJSON(w, msgs)
+}
+
+func (s *Server) handleJoinGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Agent string `json:"agent"`
+		Group string `json:"group"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.hub.JoinGroup(req.Agent, req.Group)
+	// Announce join
+	s.hub.SendMessage(req.Group, "system", req.Agent+" joined the chat", types.PriorityNormal)
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleLeaveGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Agent string `json:"agent"`
+		Group string `json:"group"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.hub.LeaveGroup(req.Agent, req.Group)
+	s.hub.SendMessage(req.Group, "system", req.Agent+" left the chat", types.PriorityNormal)
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.hub.GetGroups())
+}
+
+func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
+	var profile types.AgentProfile
+	if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.hub.RegisterAgent(profile.Name, profile)
+	writeJSON(w, map[string]string{"status": "registered"})
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{"status": "ok", "service": "agentchat-relay"})
+}
+
+// --- WebSocket ---
+
+func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.log.Error("ws upgrade", "err", err)
+		return
+	}
+	defer conn.Close()
+
+	group := r.URL.Query().Get("group")
+	if group == "" {
+		group = "general"
+	}
+
+	ch := s.hub.Subscribe(group)
+	defer s.hub.Unsubscribe(group, ch)
+
+	s.log.Info("ws connected", "group", group)
+
+	// Forward messages to WebSocket
+	for msg := range ch {
+		wsMsg := types.WSMessage{
+			Type:    "message",
+			Message: msg,
+		}
+		if err := conn.WriteJSON(wsMsg); err != nil {
+			s.log.Debug("ws write error (client disconnected)", "err", err)
+			return
+		}
+	}
+}
+
+// --- A2A Agent Card ---
+
+func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
+	card := map[string]interface{}{
+		"name":        "AgentChat Relay",
+		"description": "Multi-agent group chat relay server. Agents discover each other and communicate in real-time.",
+		"url":         "http://" + s.addr,
+		"version":     "0.1.0",
+		"capabilities": map[string]bool{
+			"streaming":      true,
+			"pushNotifications": true,
+		},
+		"skills": []map[string]interface{}{
+			{
+				"id":          "group-chat",
+				"name":        "Group Chat",
+				"description": "Join groups, send messages, receive real-time updates. Multi-agent coordination via chat.",
+			},
+		},
+		"metadata": map[string]interface{}{
+			"protocol": "agentchat-v1",
+			"transport": []string{"http-json", "websocket"},
+		},
+	}
+	writeJSON(w, card)
+}
+
+// --- Helpers ---
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+// GetHub returns the chat hub for external use (TUI, MCP).
+func (s *Server) GetHub() *chat.Hub {
+	return s.hub
+}
+
+// Broadcast sends a message from the system to all groups.
+func (s *Server) Broadcast(body string) {
+	for _, g := range s.hub.GetGroups() {
+		s.hub.SendMessage(g.Name, "system", body, types.PriorityNormal)
+	}
+}
+
+// ListGroups returns group names as strings.
+func (s *Server) ListGroupNames() []string {
+	groups := s.hub.GetGroups()
+	names := make([]string, len(groups))
+	for i, g := range groups {
+		names[i] = g.Name
+	}
+	return names
+}
+
+// handleMessagesForTUI returns the message channel for TUI integration.
+func (s *Server) SubscribeGroup(group string) <-chan *types.Message {
+	return s.hub.Subscribe(group)
+}
+
+// SendMessageFromAPI allows external components to send messages.
+func (s *Server) SendMessage(group, sender, body string, priority types.Priority) *types.Message {
+	msg := s.hub.SendMessage(group, sender, body, priority)
+	if priority == types.PriorityStealFocus {
+		notify.StealFocus(sender, body)
+	} else {
+		notify.ChatMessage(sender, body, msg.Color)
+	}
+	return msg
+}

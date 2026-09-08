@@ -1,0 +1,17 @@
+[Unit]
+Description=AgentChat TUI — WhatsApp-style group chat viewer
+After=agentchat-relay.service
+Wants=agentchat-relay.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/lisergico25/projects/agentchat
+ExecStart=/home/lisergico25/projects/agentchat/agentchat-tui http://127.0.0.1:18950 general
+Restart=on-failure
+RestartSec=10
+Environment=HOME=/home/lisergico25
+# Foot terminal for Sway
+Environment=TERM=foot
+
+[Install]
+WantedBy=default.target
