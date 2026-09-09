@@ -250,3 +250,42 @@ func TestWSBroadcast(t *testing.T) {
 		t.Fatal("timeout waiting for broadcast")
 	}
 }
+
+func TestStatusEndpoint(t *testing.T) {
+	s := newTestServer(t)
+	s.SendMessage("general", "Alice", "test", types.PriorityNormal)
+
+	req := httptest.NewRequest("GET", "/api/status", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["service"] != "agentchat-relay" {
+		t.Errorf("expected agentchat-relay, got %v", resp["service"])
+	}
+	if resp["version"] != "0.2.0" {
+		t.Errorf("expected 0.2.0, got %v", resp["version"])
+	}
+	if resp["totalMessages"].(float64) < 1 {
+		t.Errorf("expected at least 1 message, got %v", resp["totalMessages"])
+	}
+	groups := resp["groups"].([]interface{})
+	if len(groups) < 1 {
+		t.Error("expected at least 1 group")
+	}
+}
+
+func TestGetMessagesEmpty(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("GET", "/api/messages?group=nonexistent", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}

@@ -1,4 +1,6 @@
 // Package types defines the shared data types for AgentChat.
+// All packages use these types for message passing, agent profiles,
+// and group management across the relay, TUI, MCP, and tray components.
 package types
 
 import "time"

@@ -1,4 +1,8 @@
 // Package relay provides the HTTP + WebSocket relay server for AgentChat.
+// It exposes REST endpoints for message/group management, WebSocket for
+// real-time streaming, and A2A protocol support for agent-to-agent communication.
+// Messages are persisted via PebbleDB (fgt-sdk L1 cache) and broadcast to
+// all WebSocket subscribers in real-time.
 package relay
 
 import (
