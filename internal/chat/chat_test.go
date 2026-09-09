@@ -214,3 +214,80 @@ func TestGetGroups(t *testing.T) {
 		t.Errorf("expected first group 'alpha', got %s", groups[0].Name)
 	}
 }
+
+// mockStore implements MessageStore for testing persistence wiring.
+type mockStore struct {
+	saved  []*types.Message
+	loadFn func(group string, limit int) ([]*types.Message, error)
+}
+
+func (m *mockStore) Save(msg *types.Message) error {
+	m.saved = append(m.saved, msg)
+	return nil
+}
+
+func (m *mockStore) LoadRecent(group string, limit int) ([]*types.Message, error) {
+	if m.loadFn != nil {
+		return m.loadFn(group, limit)
+	}
+	return nil, nil
+}
+
+func TestSetStore(t *testing.T) {
+	h := NewHub()
+	ms := &mockStore{}
+	h.SetStore(ms)
+
+	// Send a message — should trigger save
+	h.SendMessage("general", "Alice", "persisted!", types.PriorityNormal)
+
+	// Wait for async save
+	time.Sleep(50 * time.Millisecond)
+
+	if len(ms.saved) != 1 {
+		t.Errorf("expected 1 saved message, got %d", len(ms.saved))
+	}
+	if ms.saved[0].Body != "persisted!" {
+		t.Errorf("expected 'persisted!', got %s", ms.saved[0].Body)
+	}
+}
+
+func TestLoadHistory(t *testing.T) {
+	h := NewHub()
+	stored := []*types.Message{
+		{ID: "old1", Group: "general", Sender: "Bob", Body: "from store", TS: time.Now().Add(-time.Hour)},
+	}
+	ms := &mockStore{
+		loadFn: func(group string, limit int) ([]*types.Message, error) {
+			return stored, nil
+		},
+	}
+	h.SetStore(ms)
+
+	// Add a live message
+	h.SendMessage("general", "Alice", "live", types.PriorityNormal)
+
+	// Load history
+	h.LoadHistory("general", 100)
+
+	msgs := h.GetMessages("general", time.Time{}, 0)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (1 stored + 1 live), got %d", len(msgs))
+	}
+	// Stored should come first (older)
+	if msgs[0].Body != "from store" {
+		t.Errorf("expected stored message first, got %s", msgs[0].Body)
+	}
+	if msgs[1].Body != "live" {
+		t.Errorf("expected live message second, got %s", msgs[1].Body)
+	}
+}
+
+func TestLoadHistoryNoStore(t *testing.T) {
+	h := NewHub()
+	// No store set — LoadHistory should be a no-op
+	err := h.LoadHistory("general", 100)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+}

@@ -18,6 +18,13 @@ type Hub struct {
 	messages map[string][]*types.Message // group → messages
 	agents   map[string]types.AgentProfile
 	subs     map[string][]chan *types.Message // group → subscriber channels
+	store    MessageStore                     // optional persistence backend
+}
+
+// MessageStore is the interface for message persistence (PebbleDB).
+type MessageStore interface {
+	Save(msg *types.Message) error
+	LoadRecent(group string, limit int) ([]*types.Message, error)
 }
 
 // NewHub creates a new chat hub.
@@ -46,6 +53,31 @@ func (h *Hub) RegisterAgent(name string, profile types.AgentProfile) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.agents[name] = profile
+}
+
+// SetStore configures the persistence backend. Messages will be saved to it.
+func (h *Hub) SetStore(store MessageStore) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.store = store
+}
+
+// LoadHistory loads recent messages for a group from the store into memory.
+func (h *Hub) LoadHistory(groupName string, limit int) error {
+	if h.store == nil {
+		return nil
+	}
+	msgs, err := h.store.LoadRecent(groupName, limit)
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Merge: store messages are older, prepend them
+	existing := h.messages[groupName]
+	merged := append(msgs, existing...)
+	h.messages[groupName] = merged
+	return nil
 }
 
 // JoinGroup adds an agent to a group. Creates the group if needed.
@@ -114,6 +146,11 @@ func (h *Hub) SendMessage(groupName, sender, body string, priority types.Priorit
 	}
 
 	h.messages[groupName] = append(h.messages[groupName], msg)
+
+	// Persist to store if configured
+	if h.store != nil {
+		go h.store.Save(msg) // async, non-blocking
+	}
 
 	// Notify subscribers
 	for _, ch := range h.subs[groupName] {

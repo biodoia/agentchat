@@ -10,6 +10,7 @@ import (
 	"github.com/biodoia/agentchat/internal/a2aagent"
 	"github.com/biodoia/agentchat/internal/chat"
 	"github.com/biodoia/agentchat/internal/notify"
+	"github.com/biodoia/agentchat/internal/store"
 	"github.com/biodoia/agentchat/pkg/types"
 	"github.com/gorilla/websocket"
 )
@@ -20,16 +21,31 @@ var upgrader = websocket.Upgrader{
 
 // Server is the AgentChat relay HTTP server.
 type Server struct {
-	hub  *chat.Hub
-	log  *slog.Logger
-	mux  *http.ServeMux
-	addr string
+	hub   *chat.Hub
+	store *store.MessageStore
+	log   *slog.Logger
+	mux   *http.ServeMux
+	addr  string
 }
 
-// New creates a relay server.
-func New(addr string, log *slog.Logger) *Server {
+// New creates a relay server. If dataDir is non-empty, enables PebbleDB persistence.
+func New(addr string, dataDir string, log *slog.Logger) *Server {
+	hub := chat.NewHub()
+
+	// Wire PebbleDB store if dataDir provided
+	if dataDir != "" {
+		st, err := store.New(dataDir, log)
+		if err != nil {
+			log.Error("failed to open PebbleDB store", "err", err)
+		} else {
+			hub.SetStore(st)
+			// Load history for default group
+			hub.LoadHistory("general", 100)
+		}
+	}
+
 	s := &Server{
-		hub:  chat.NewHub(),
+		hub:  hub,
 		log:  log,
 		mux:  http.NewServeMux(),
 		addr: addr,
