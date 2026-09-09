@@ -343,3 +343,106 @@ func TestSendMessageEmptyBody(t *testing.T) {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
 }
+
+func TestSendMessageCustomGroup(t *testing.T) {
+	s := newTestServer(t)
+	body, _ := json.Marshal(map[string]string{
+		"group":  "dev-team",
+		"sender": "Alice",
+		"body":   "hello dev team",
+	})
+	req := httptest.NewRequest("POST", "/api/message", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	var msg types.Message
+	json.Unmarshal(w.Body.Bytes(), &msg)
+	if msg.Group != "dev-team" {
+		t.Errorf("expected group 'dev-team', got %s", msg.Group)
+	}
+}
+
+func TestGetMessagesWithSince(t *testing.T) {
+	s := newTestServer(t)
+	s.SendMessage("general", "Alice", "old msg", types.PriorityNormal)
+
+	req := httptest.NewRequest("GET", "/api/messages?group=general&since=2099-01-01T00:00:00Z", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	var msgs []*types.Message
+	json.Unmarshal(w.Body.Bytes(), &msgs)
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages (future since), got %d", len(msgs))
+	}
+}
+
+func TestJoinGroupCreatesGroup(t *testing.T) {
+	s := newTestServer(t)
+	body, _ := json.Marshal(map[string]string{
+		"agent": "Alice",
+		"group": "brand-new-group",
+	})
+	req := httptest.NewRequest("POST", "/api/group/join", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	// Verify group exists
+	g := s.hub.GetGroup("brand-new-group")
+	if g == nil {
+		t.Fatal("expected group to be created")
+	}
+}
+
+func TestStatusWithMultipleGroups(t *testing.T) {
+	s := newTestServer(t)
+	s.hub.JoinGroup("Alice", "general")
+	s.hub.JoinGroup("Bob", "dev")
+	s.SendMessage("general", "Alice", "msg1", types.PriorityNormal)
+	s.SendMessage("general", "Bob", "msg2", types.PriorityNormal)
+	s.SendMessage("dev", "Charlie", "msg3", types.PriorityNormal)
+
+	req := httptest.NewRequest("GET", "/api/status", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	total := resp["totalMessages"].(float64)
+	if total != 3 {
+		t.Errorf("expected 3 total messages, got %v", total)
+	}
+
+	groups := resp["groups"].([]interface{})
+	if len(groups) < 2 {
+		t.Errorf("expected at least 2 groups, got %d", len(groups))
+	}
+}
+
+func TestListGroupsContent(t *testing.T) {
+	s := newTestServer(t)
+	s.hub.JoinGroup("Alice", "alpha")
+	s.hub.JoinGroup("Bob", "beta")
+
+	req := httptest.NewRequest("GET", "/api/groups", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	var groups []*types.Group
+	json.Unmarshal(w.Body.Bytes(), &groups)
+
+	names := make(map[string]bool)
+	for _, g := range groups {
+		names[g.Name] = true
+	}
+	if !names["alpha"] || !names["beta"] || !names["general"] {
+		t.Errorf("expected alpha, beta, general; got %v", names)
+	}
+}
