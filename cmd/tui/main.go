@@ -71,7 +71,8 @@ func initialModel(relayURL, group, sender string) model {
 
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
-		connectWS(m.relayURL, m.group),
+		joinGroup(m.relayURL, m.sender, m.group),
+		loadHistory(m.relayURL, m.group),
 		tea.EnterAltScreen,
 	)
 }
@@ -82,6 +83,8 @@ type wsMessage chatMsg
 type wsConnectedMsg struct{ conn *websocket.Conn }
 type wsErrorMsg struct{ err error }
 type sentMsg struct{}
+type historyLoadedMsg struct{ msgs []chatMsg }
+type joinedGroupMsg struct{}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -111,6 +114,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.input += msg.String()
 		}
+
+	case historyLoadedMsg:
+		m.messages = append(msg.msgs, m.messages...)
+		// After history loads, connect WebSocket
+		return m, connectWS(m.relayURL, m.group)
+
+	case joinedGroupMsg:
+		// Group joined, history will load next
+		return m, nil
 
 	case wsMessage:
 		m.messages = append(m.messages, chatMsg(msg))
@@ -244,6 +256,46 @@ func sendMessage(relayURL, group, sender, body string) tea.Cmd {
 		defer resp.Body.Close()
 		io.ReadAll(resp.Body)
 		return sentMsg{}
+	}
+}
+
+func joinGroup(relayURL, agent, group string) tea.Cmd {
+	return func() tea.Msg {
+		payload := map[string]string{"agent": agent, "group": group}
+		data, _ := json.Marshal(payload)
+		http.Post(relayURL+"/api/group/join", "application/json", bytes.NewReader(data))
+		return joinedGroupMsg{}
+	}
+}
+
+func loadHistory(relayURL, group string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := http.Get(fmt.Sprintf("%s/api/messages?group=%s&limit=50", relayURL, group))
+		if err != nil {
+			return historyLoadedMsg{}
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		var msgs []struct {
+			Sender   string `json:"sender"`
+			Body     string `json:"body"`
+			Color    string `json:"color"`
+			Avatar   string `json:"avatar"`
+			TS       string `json:"ts"`
+			Priority string `json:"priority"`
+		}
+		json.Unmarshal(body, &msgs)
+
+		result := make([]chatMsg, 0, len(msgs))
+		for _, m := range msgs {
+			ts, _ := time.Parse(time.RFC3339, m.TS)
+			result = append(result, chatMsg{
+				Sender: m.Sender, Body: m.Body, Color: m.Color,
+				Avatar: m.Avatar, TS: ts, Priority: m.Priority,
+			})
+		}
+		return historyLoadedMsg{msgs: result}
 	}
 }
 

@@ -2,9 +2,13 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/biodoia/agentchat/internal/a2aagent"
@@ -74,10 +78,36 @@ func (s *Server) routes() {
 	a2aagent.SetupA2AServer(s.mux, s.hub, s.addr, s.log)
 }
 
-// ListenAndServe starts the relay server.
+// ListenAndServe starts the relay server with graceful shutdown support.
 func (s *Server) ListenAndServe() error {
+	srv := &http.Server{Addr: s.addr, Handler: s.mux}
+
+	// Graceful shutdown on SIGTERM/SIGINT
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	go func() {
+		sig := <-sigCh
+		s.log.Info("shutdown signal received", "signal", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			s.log.Error("shutdown error", "err", err)
+		}
+	}()
+
 	s.log.Info("AgentChat relay starting", "addr", s.addr)
-	return http.ListenAndServe(s.addr, s.mux)
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+
+	// Close PebbleDB store if present
+	if s.store != nil {
+		s.log.Info("closing PebbleDB store")
+		s.store.Close()
+	}
+	s.log.Info("relay stopped cleanly")
+	return nil
 }
 
 // --- REST Handlers ---
