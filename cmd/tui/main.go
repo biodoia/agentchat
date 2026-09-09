@@ -51,6 +51,7 @@ type model struct {
 	input    string
 	group    string
 	relayURL string
+	sender   string
 	wsConn   *websocket.Conn
 	err      error
 	width    int
@@ -58,10 +59,11 @@ type model struct {
 	ready    bool
 }
 
-func initialModel(relayURL, group string) model {
+func initialModel(relayURL, group, sender string) model {
 	return model{
 		relayURL: relayURL,
 		group:    group,
+		sender:   sender,
 		width:    80,
 		height:   24,
 	}
@@ -98,7 +100,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case tea.KeyEnter:
 			if m.input != "" {
-				cmd := sendMessage(m.relayURL, m.group, "MiMoCode", m.input)
+				cmd := sendMessage(m.relayURL, m.group, m.sender, m.input)
 				m.input = ""
 				return m, cmd
 			}
@@ -268,6 +270,10 @@ func wrapText(text string, width int) string {
 func main() {
 	relayURL := "http://127.0.0.1:18950"
 	group := "general"
+	sender := os.Getenv("AGENTCHAT_SENDER")
+	if sender == "" {
+		sender = "MiMoCode"
+	}
 
 	if len(os.Args) > 1 {
 		relayURL = os.Args[1]
@@ -275,8 +281,18 @@ func main() {
 	if len(os.Args) > 2 {
 		group = os.Args[2]
 	}
+	if len(os.Args) > 3 {
+		sender = os.Args[3]
+	}
 
-	p := tea.NewProgram(initialModel(relayURL, group), tea.WithAltScreen())
+	// Register agent on connect
+	go func() {
+		profile := map[string]string{"name": sender}
+		data, _ := json.Marshal(profile)
+		http.Post(relayURL+"/api/agent/register", "application/json", bytes.NewReader(data))
+	}()
+
+	p := tea.NewProgram(initialModel(relayURL, group, sender), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
