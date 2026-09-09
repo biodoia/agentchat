@@ -4,7 +4,9 @@ package tray
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os/exec"
 	"strings"
 
@@ -22,15 +24,16 @@ const (
 
 // SNIItem is a StatusNotifierItem D-Bus tray icon.
 type SNIItem struct {
-	conn     *dbus.Conn
-	name     string
-	iconName string
-	title    string
-	status   string // "Active", "NeedsAttention", "Passive"
-	tooltip  string
-	log      *slog.Logger
-	onClick  func()
-	onMenu   func()
+	conn      *dbus.Conn
+	name      string
+	iconName  string
+	title     string
+	status    string // "Active", "NeedsAttention", "Passive"
+	tooltip   string
+	relayURL  string
+	log       *slog.Logger
+	onClick   func()
+	onMenu    func()
 	menuItems []MenuItem
 }
 
@@ -42,23 +45,27 @@ type MenuItem struct {
 }
 
 // NewSNIItem creates a new StatusNotifierItem.
-func NewSNIItem(name, icon, title string, log *slog.Logger) *SNIItem {
+func NewSNIItem(name, icon, title, relayURL string, log *slog.Logger) *SNIItem {
+	if relayURL == "" {
+		relayURL = "http://127.0.0.1:18950"
+	}
 	return &SNIItem{
 		name:     name,
 		iconName: icon,
 		title:    title,
 		status:   "Active",
+		relayURL: relayURL,
 		log:      log,
 		menuItems: []MenuItem{
-			{Label: "Show Chat", Action: func() { exec.Command("agentchat-tui").Start() }},
+			{Label: "Show Chat", Action: func() { exec.Command("foot", "-T", "AgentChat", "agentchat-tui").Start() }},
 			{Sep: true},
-			{Label: "New Group", Action: func() { showInputDialog("New Group") }},
-			{Label: "List Agents", Action: func() { showInfo("agentchat-mcp groups") }},
+			{Label: "New Group", Action: func() { joinNewGroup(relayURL, "system") }},
+			{Label: "List Groups", Action: func() { showGroupList(relayURL) }},
 			{Sep: true},
-			{Label: "Status", Action: func() { showInfo("Relay running on :18950") }},
+			{Label: "Status", Action: func() { showGroupList(relayURL) }},
 			{Sep: true},
 			{Label: "Restart Relay", Action: func() { exec.Command("systemctl", "--user", "restart", "agentchat-relay").Run() }},
-			{Label: "Quit", Action: func() { /* shutdown */ }},
+			{Label: "Quit", Action: func() { exec.Command("systemctl", "--user", "stop", "agentchat-tray").Run() }},
 		},
 	}
 }
@@ -243,10 +250,46 @@ func (s *SNIItem) showWofiMenu() {
 	}
 }
 
-func showInputDialog(prompt string) {
-	exec.Command("wofi", "--dmenu", "--prompt", prompt).Run()
+// showInputDialog shows a wofi input dialog and returns the input text.
+func showInputDialog(prompt string) string {
+	cmd := exec.Command("wofi", "--dmenu", "--prompt", prompt, "--width", "300", "--height", "80")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
+// showInfo sends a desktop notification with the given message.
 func showInfo(msg string) {
-	exec.Command("notify-send", "--app-name", "AgentChat", msg).Run()
+	exec.Command("notify-send", "--app-name", "AgentChat", "--icon", "dialog-information", msg).Run()
+}
+
+// showGroupList fetches groups from the relay and shows them as a notification.
+func showGroupList(relayURL string) {
+	if relayURL == "" {
+		relayURL = "http://127.0.0.1:18950"
+	}
+	resp, err := http.Get(relayURL + "/api/status")
+	if err != nil {
+		showInfo("Relay not running")
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	showInfo(string(body))
+}
+
+// joinNewGroup prompts for a group name and joins it via the relay API.
+func joinNewGroup(relayURL, agentName string) {
+	name := showInputDialog("New group name:")
+	if name == "" {
+		return
+	}
+	if relayURL == "" {
+		relayURL = "http://127.0.0.1:18950"
+	}
+	payload := fmt.Sprintf(`{"agent":%q,"group":%q}`, agentName, name)
+	http.Post(relayURL+"/api/group/join", "application/json", strings.NewReader(payload))
+	showInfo(fmt.Sprintf("Joined group: %s", name))
 }

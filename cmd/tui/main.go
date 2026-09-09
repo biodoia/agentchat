@@ -328,12 +328,50 @@ func wrapText(text string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// detectSender tries to identify the parent agent process.
+func detectSender() string {
+	ppid := os.Getppid()
+	procPath := fmt.Sprintf("/proc/%d/cmdline", ppid)
+	data, err := os.ReadFile(procPath)
+	if err != nil {
+		return "Unknown"
+	}
+	cmdline := string(data)
+
+	switch {
+	case strings.Contains(cmdline, "mimo"):
+		return "MiMoCode"
+	case strings.Contains(cmdline, "claude"):
+		return "Claude"
+	case strings.Contains(cmdline, "codex"):
+		return "Codex"
+	case strings.Contains(cmdline, "kiro"):
+		return "Kiro"
+	case strings.Contains(cmdline, "grok"):
+		return "Grok"
+	case strings.Contains(cmdline, "gemini"):
+		return "Gemini"
+	case strings.Contains(cmdline, "qwen"):
+		return "Qwen"
+	case strings.Contains(cmdline, "hermes"):
+		return "Hermes"
+	default:
+		return "Agent"
+	}
+}
+
 func main() {
-	relayURL := "http://127.0.0.1:18950"
+	// Auto-discover relay URL from env
+	relayURL := os.Getenv("AGENTCHAT_RELAY")
+	if relayURL == "" {
+		relayURL = "http://127.0.0.1:18950"
+	}
 	group := "general"
+
+	// Auto-detect sender from env or parent process
 	sender := os.Getenv("AGENTCHAT_SENDER")
 	if sender == "" {
-		sender = "MiMoCode"
+		sender = detectSender()
 	}
 
 	if len(os.Args) > 1 {

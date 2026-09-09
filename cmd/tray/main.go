@@ -13,7 +13,12 @@ import (
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	item := tray.NewSNIItem("agentchat", "internet-chat", "AgentChat - AI Group Chat", log)
+	relayURL := os.Getenv("AGENTCHAT_RELAY")
+	if relayURL == "" {
+		relayURL = "http://127.0.0.1:18950"
+	}
+
+	item := tray.NewSNIItem("agentchat", "internet-chat", "AgentChat - AI Group Chat", relayURL, log)
 	item.SetOnClick(func() {
 		exec.Command("foot", "-T", "AgentChat", "agentchat-tui").Start()
 	})
