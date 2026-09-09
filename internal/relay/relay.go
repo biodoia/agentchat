@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/biodoia/agentchat/internal/a2aagent"
 	"github.com/biodoia/agentchat/internal/chat"
 	"github.com/biodoia/agentchat/internal/notify"
 	"github.com/biodoia/agentchat/pkg/types"
@@ -50,8 +51,8 @@ func (s *Server) routes() {
 	// WebSocket for real-time
 	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
 
-	// Agent Card (A2A discovery)
-	s.mux.HandleFunc("GET /.well-known/agent.json", s.handleAgentCard)
+	// A2A protocol server
+	a2aagent.SetupA2AServer(s.mux, s.hub, s.addr, s.log)
 }
 
 // ListenAndServe starts the relay server.
@@ -192,33 +193,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-}
-
-// --- A2A Agent Card ---
-
-func (s *Server) handleAgentCard(w http.ResponseWriter, r *http.Request) {
-	card := map[string]interface{}{
-		"name":        "AgentChat Relay",
-		"description": "Multi-agent group chat relay server. Agents discover each other and communicate in real-time.",
-		"url":         "http://" + s.addr,
-		"version":     "0.1.0",
-		"capabilities": map[string]bool{
-			"streaming":      true,
-			"pushNotifications": true,
-		},
-		"skills": []map[string]interface{}{
-			{
-				"id":          "group-chat",
-				"name":        "Group Chat",
-				"description": "Join groups, send messages, receive real-time updates. Multi-agent coordination via chat.",
-			},
-		},
-		"metadata": map[string]interface{}{
-			"protocol": "agentchat-v1",
-			"transport": []string{"http-json", "websocket"},
-		},
-	}
-	writeJSON(w, card)
 }
 
 // --- Helpers ---
