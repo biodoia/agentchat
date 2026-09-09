@@ -13,15 +13,13 @@ Tracking dei lavori da fare. Aggiornato ad ogni loop.
 
 ## CRITICA (blocca l'uso in produzione)
 
-- [ ] **TUI: join group + load history on startup**
+- [x] **TUI: join group + load history on startup** (loop 10)
   Il TUI si connette al WebSocket ma non fa POST /api/group/join e non
   carica la cronologia. Senza questo, i messaggi precedenti sono persi.
-  Sforzo: 30 min
 
-- [ ] **Graceful shutdown nel relay**
+- [x] **Graceful shutdown nel relay** (loop 10)
   ListenAndServe() non gestisce SIGTERM/SIGINT. Ctrl+C non chiude
   PebbleDB pulitamente. Rischio corruzione dati.
-  Sforzo: 15 min
 
 - [ ] **Installare skill negli agenti**
   Copiare skills/agentchat/SKILL.md in .mimocode/skills/agentchat/
@@ -97,9 +95,7 @@ Tracking dei lavori da fare. Aggiornato ad ogni loop.
   Visualizzare gruppi e messaggi nel browser.
   Sforzo: 3 ore
 
-- [ ] **Makefile**
-  Build automatizzato con make build, make test, make install.
-  Sforzo: 10 min
+- [x] **Makefile** (loop 11)
 
 ---
 
@@ -115,6 +111,9 @@ Tracking dei lavori da fare. Aggiornato ad ogni loop.
 - [x] **Notify tests + health dashboard** — /api/status (loop 7)
 - [x] **Types tests + README** — 4 test + docs (loop 8)
 - [x] **Retro README + AGENT_GUIDE + SKILL + TODO** — (loop 9)
+- [x] **TUI join + history on startup** — (loop 10)
+- [x] **Relay graceful shutdown** — SIGTERM → close PebbleDB (loop 10)
+- [x] **Makefile** — build, test, install, dev (loop 11)
 
 ---
 
@@ -122,10 +121,10 @@ Tracking dei lavori da fare. Aggiornato ad ogni loop.
 
 | Metrica | Valore |
 |---------|--------|
-| LOC | ~2600 |
+| LOC | ~2800 |
 | Test | 55 PASS, 0 FAIL |
 | Coverage | chat 90%, store 84%, a2aagent 76%, relay 53% |
 | Binari | 4 (relay, tui, mcp, tray) |
-| Commit | 13 |
+| Commit | 15 |
 | Packages con test | 7/11 |
 | Repo | github.com/biodoia/agentchat |
