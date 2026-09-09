@@ -21,11 +21,12 @@ var upgrader = websocket.Upgrader{
 
 // Server is the AgentChat relay HTTP server.
 type Server struct {
-	hub   *chat.Hub
-	store *store.MessageStore
-	log   *slog.Logger
-	mux   *http.ServeMux
-	addr  string
+	hub     *chat.Hub
+	store   *store.MessageStore
+	log     *slog.Logger
+	mux     *http.ServeMux
+	addr    string
+	started time.Time
 }
 
 // New creates a relay server. If dataDir is non-empty, enables PebbleDB persistence.
@@ -45,10 +46,11 @@ func New(addr string, dataDir string, log *slog.Logger) *Server {
 	}
 
 	s := &Server{
-		hub:  hub,
-		log:  log,
-		mux:  http.NewServeMux(),
-		addr: addr,
+		hub:     hub,
+		log:     log,
+		mux:     http.NewServeMux(),
+		addr:    addr,
+		started: time.Now(),
 	}
 	s.routes()
 	return s
@@ -63,6 +65,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/groups", s.handleListGroups)
 	s.mux.HandleFunc("POST /api/agent/register", s.handleRegisterAgent)
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 
 	// WebSocket for real-time
 	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
@@ -176,6 +179,28 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok", "service": "agentchat-relay"})
+}
+
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	groups := s.hub.GetGroups()
+	groupDetails := make([]map[string]interface{}, 0, len(groups))
+	totalMessages := 0
+	for _, g := range groups {
+		msgs := s.hub.GetMessages(g.Name, time.Time{}, 10000)
+		totalMessages += len(msgs)
+		groupDetails = append(groupDetails, map[string]interface{}{
+			"name":     g.Name,
+			"members":  len(g.Members),
+			"messages": len(msgs),
+		})
+	}
+	writeJSON(w, map[string]interface{}{
+		"service":       "agentchat-relay",
+		"version":       "0.2.0",
+		"uptime":        time.Since(s.started).String(),
+		"groups":        groupDetails,
+		"totalMessages": totalMessages,
+	})
 }
 
 // --- WebSocket ---
