@@ -2,6 +2,7 @@
 agentchat-relay
 agentchat-tui
 agentchat-mcp
+agentchat-tray
 *.exe
 
 # Go build
