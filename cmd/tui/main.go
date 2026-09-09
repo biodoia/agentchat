@@ -85,6 +85,7 @@ type wsErrorMsg struct{ err error }
 type sentMsg struct{}
 type historyLoadedMsg struct{ msgs []chatMsg }
 type joinedGroupMsg struct{}
+type reconnectMsg struct{}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -134,7 +135,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case wsErrorMsg:
 		m.err = msg.err
-		return m, nil
+		m.wsConn = nil
+		// Reconnect after 3 seconds
+		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+			return reconnectMsg{}
+		})
+
+	case reconnectMsg:
+		m.err = nil
+		return m, connectWS(m.relayURL, m.group)
 
 	case sentMsg:
 		return m, nil
