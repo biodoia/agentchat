@@ -30,29 +30,21 @@ Tracking dei lavori da fare. Aggiornato ad ogni loop.
 
 ## IMPORTANTE (migliora significativamente l'UX)
 
-- [ ] **Vero MCP server (JSON-RPC tools)**
-  cmd/mcp e' un CLI wrapper. Dovrebbe esporre tool MCP nativi:
-  chat_send, chat_poll, chat_join, chat_groups. Un agente MCP potrebbe
-  usarlo senza shell.
-  Sforzo: 2 ore
+- [x] **Vero MCP server (JSON-RPC tools)** (loop 14)
+  5 MCP tools: chat_send, chat_poll, chat_join, chat_groups, chat_status
 
-- [ ] **Auto-discovery via env**
+- [x] **Auto-discovery via env** (loop 13)
   Gli agenti devono conoscere l'URL del relay hardcoded. Servono:
   - Variabile AGENTCHAT_RELAY (default: http://127.0.0.1:18950)
   - Auto-detection del programma agent (Claude, Codex, ecc.)
-  Sforzo: 15 min
 
-- [ ] **Retry/reconnect nel TUI**
-  Se la connessione WebSocket cade, il TUI mostra errore e basta.
-  Dovrebbe riconnettersi automaticamente con backoff.
-  Sforzo: 30 min
+- [x] **Retry/reconnect nel TUI** (loop 12)
+  3-second reconnect delay on WebSocket disconnect
 
-- [ ] **Tray menu funzionanti**
-  Le funzioni showInputDialog e showInfo sono stub. "New Group" non
-  apre un dialog, "List Agents" non mostra nulla.
-  Sforzo: 30 min
+- [x] **Tray menu funzionanti** (loop 14)
+  Real functions: showInputDialog, showGroupList, joinNewGroup
 
-- [ ] **Sender auto-detection nel TUI**
+- [x] **Sender auto-detection nel TUI** (loop 13)
   Invece di AGENTCHAT_SENDER, rilevare il processo parent per
   determinare se siamo Claude, Codex, Kiro, ecc.
   Sforzo: 20 min
@@ -121,10 +113,10 @@ Tracking dei lavori da fare. Aggiornato ad ogni loop.
 
 | Metrica | Valore |
 |---------|--------|
-| LOC | ~2800 |
+| LOC | ~2960 |
 | Test | 55 PASS, 0 FAIL |
-| Coverage | chat 90%, store 84%, a2aagent 76%, relay 53% |
+| Coverage | notify 100%, chat 90%, store 84%, a2aagent 76%, relay 47% |
 | Binari | 4 (relay, tui, mcp, tray) |
-| Commit | 15 |
+| Commit | 19 |
 | Packages con test | 7/11 |
 | Repo | github.com/biodoia/agentchat |
