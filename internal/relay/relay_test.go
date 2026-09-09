@@ -289,3 +289,57 @@ func TestGetMessagesEmpty(t *testing.T) {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
 }
+
+func TestJoinGroupInvalidBody(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/group/join", bytes.NewReader([]byte("bad")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for invalid body, got %d", w.Code)
+	}
+}
+
+func TestLeaveGroupInvalidBody(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/group/leave", bytes.NewReader([]byte("bad")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for invalid body, got %d", w.Code)
+	}
+}
+
+func TestRegisterAgentInvalidBody(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest("POST", "/api/agent/register", bytes.NewReader([]byte("bad")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for invalid body, got %d", w.Code)
+	}
+}
+
+func TestSendMessageEmptyBody(t *testing.T) {
+	s := newTestServer(t)
+	body, _ := json.Marshal(map[string]string{
+		"group":  "general",
+		"sender": "Bot",
+		"body":   "",
+	})
+	req := httptest.NewRequest("POST", "/api/message", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	// Empty body should still succeed (no validation on body content)
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
