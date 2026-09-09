@@ -1,0 +1,15 @@
+[Unit]
+Description=AgentChat Tray — System tray icon (Sway/Wayland)
+After=agentchat-relay.service
+Wants=agentchat-relay.service
+
+[Service]
+Type=simple
+ExecStart=/home/lisergico25/projects/agentchat/agentchat-tray
+Restart=on-failure
+RestartSec=10
+Environment=HOME=/home/lisergico25
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+[Install]
+WantedBy=default.target
