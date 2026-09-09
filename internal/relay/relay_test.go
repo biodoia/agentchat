@@ -446,3 +446,82 @@ func TestListGroupsContent(t *testing.T) {
 		t.Errorf("expected alpha, beta, general; got %v", names)
 	}
 }
+
+func TestGetHub(t *testing.T) {
+	s := newTestServer(t)
+	hub := s.GetHub()
+	if hub == nil {
+		t.Fatal("expected non-nil hub")
+	}
+}
+
+func TestBroadcast(t *testing.T) {
+	s := newTestServer(t)
+	s.SendMessage("general", "Alice", "before", types.PriorityNormal)
+	s.Broadcast("system broadcast")
+
+	msgs := s.hub.GetMessages("general", time.Time{}, 10)
+	last := msgs[len(msgs)-1]
+	if last.Body != "system broadcast" {
+		t.Errorf("expected 'system broadcast', got %s", last.Body)
+	}
+	if last.Sender != "system" {
+		t.Errorf("expected sender 'system', got %s", last.Sender)
+	}
+}
+
+func TestListGroupNames(t *testing.T) {
+	s := newTestServer(t)
+	s.hub.JoinGroup("Alice", "alpha")
+	s.hub.JoinGroup("Bob", "beta")
+
+	names := s.ListGroupNames()
+	nameSet := make(map[string]bool)
+	for _, n := range names {
+		nameSet[n] = true
+	}
+	if !nameSet["general"] || !nameSet["alpha"] || !nameSet["beta"] {
+		t.Errorf("expected general, alpha, beta; got %v", names)
+	}
+}
+
+func TestSubscribeGroup(t *testing.T) {
+	s := newTestServer(t)
+	ch := s.SubscribeGroup("general")
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		s.SendMessage("general", "Alice", "subscribed!", types.PriorityNormal)
+	}()
+
+	select {
+	case msg := <-ch:
+		if msg.Body != "subscribed!" {
+			t.Errorf("expected 'subscribed!', got %s", msg.Body)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout")
+	}
+}
+
+func TestSendMessageViaHelper(t *testing.T) {
+	s := newTestServer(t)
+	msg := s.SendMessage("general", "Helper", "via helper", types.PriorityStealFocus)
+	if msg.Body != "via helper" {
+		t.Errorf("expected 'via helper', got %s", msg.Body)
+	}
+	if msg.Priority != types.PriorityStealFocus {
+		t.Errorf("expected steal-focus, got %s", msg.Priority)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	short := truncate("hi", 10)
+	if short != "hi" {
+		t.Errorf("expected 'hi', got %s", short)
+	}
+	long := truncate("this is a very long string", 10)
+	if len(long) > 13 { // 10 + "..."
+		t.Errorf("expected truncation, got %s", long)
+	}
+}
