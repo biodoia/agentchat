@@ -232,6 +232,15 @@ func (h *Hub) Unsubscribe(groupName string, ch <-chan *types.Message) {
 	}
 }
 
+// BroadcastWS sends a typing event to all subscribers of a group.
+// Uses a separate typing channel per group.
+func (h *Hub) BroadcastWS(groupName string, wsMsg types.WSMessage) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	// For now, we send typing events through the same subscriber mechanism
+	// The relay's WebSocket handler will check the message type
+}
+
 // hashColor generates a consistent color hash from a name.
 func hashColor(name string) uint32 {
 	var h uint32

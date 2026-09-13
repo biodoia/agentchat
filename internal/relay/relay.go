@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,13 +31,15 @@ var upgrader = websocket.Upgrader{
 
 // Server is the AgentChat relay HTTP server.
 type Server struct {
-	hub     *chat.Hub
-	store   *store.MessageStore
-	limiter *ratelimit.Limiter
-	log     *slog.Logger
-	mux     *http.ServeMux
-	addr    string
-	started time.Time
+	hub        *chat.Hub
+	store      *store.MessageStore
+	limiter    *ratelimit.Limiter
+	log        *slog.Logger
+	mux        *http.ServeMux
+	addr       string
+	started    time.Time
+	typingChs  map[string][]chan types.WSMessage // group → typing subscribers
+	typingMu   sync.RWMutex
 }
 
 // New creates a relay server. If dataDir is non-empty, enables PebbleDB persistence.
@@ -56,11 +59,12 @@ func New(addr string, dataDir string, log *slog.Logger) *Server {
 	}
 
 	s := &Server{
-		hub:     hub,
-		limiter: ratelimit.New(10, 20), // 10 msg/sec, burst 20
-		log:     log,
-		mux:     http.NewServeMux(),
-		addr:    addr,
+		hub:       hub,
+		limiter:   ratelimit.New(10, 20),
+		typingChs: make(map[string][]chan types.WSMessage),
+		log:       log,
+		mux:       http.NewServeMux(),
+		addr:      addr,
 		started: time.Now(),
 	}
 	s.routes()
@@ -75,6 +79,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/group/leave", s.handleLeaveGroup)
 	s.mux.HandleFunc("GET /api/groups", s.handleListGroups)
 	s.mux.HandleFunc("POST /api/agent/register", s.handleRegisterAgent)
+	s.mux.HandleFunc("POST /api/typing", s.handleTyping)
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 
@@ -220,6 +225,38 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "registered"})
 }
 
+func (s *Server) handleTyping(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Sender string `json:"sender"`
+		Group  string `json:"group"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Group == "" {
+		req.Group = "general"
+	}
+
+	wsMsg := types.WSMessage{
+		Type:  "typing",
+		Agent: req.Sender,
+		Group: req.Group,
+	}
+
+	s.typingMu.RLock()
+	chs := s.typingChs[req.Group]
+	s.typingMu.RUnlock()
+
+	for _, ch := range chs {
+		select {
+		case ch <- wsMsg:
+		default:
+		}
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok", "service": "agentchat-relay"})
 }
@@ -264,17 +301,42 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	ch := s.hub.Subscribe(group)
 	defer s.hub.Unsubscribe(group, ch)
 
+	// Subscribe to typing events
+	typingCh := make(chan types.WSMessage, 16)
+	s.typingMu.Lock()
+	s.typingChs[group] = append(s.typingChs[group], typingCh)
+	s.typingMu.Unlock()
+	defer func() {
+		s.typingMu.Lock()
+		chs := s.typingChs[group]
+		for i, c := range chs {
+			if c == typingCh {
+				s.typingChs[group] = append(chs[:i], chs[i+1:]...)
+				break
+			}
+		}
+		s.typingMu.Unlock()
+	}()
+
 	s.log.Info("ws connected", "group", group)
 
-	// Forward messages to WebSocket
-	for msg := range ch {
-		wsMsg := types.WSMessage{
-			Type:    "message",
-			Message: msg,
-		}
-		if err := conn.WriteJSON(wsMsg); err != nil {
-			s.log.Debug("ws write error (client disconnected)", "err", err)
-			return
+	// Forward both messages and typing events to WebSocket
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			wsMsg := types.WSMessage{Type: "message", Message: msg}
+			if err := conn.WriteJSON(wsMsg); err != nil {
+				s.log.Debug("ws write error", "err", err)
+				return
+			}
+		case typingMsg := <-typingCh:
+			if err := conn.WriteJSON(typingMsg); err != nil {
+				s.log.Debug("ws write error (typing)", "err", err)
+				return
+			}
 		}
 	}
 }
