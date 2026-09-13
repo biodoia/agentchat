@@ -18,6 +18,7 @@ import (
 	"github.com/biodoia/agentchat/internal/a2aagent"
 	"github.com/biodoia/agentchat/internal/chat"
 	"github.com/biodoia/agentchat/internal/notify"
+	"github.com/biodoia/agentchat/internal/ratelimit"
 	"github.com/biodoia/agentchat/internal/store"
 	"github.com/biodoia/agentchat/pkg/types"
 	"github.com/gorilla/websocket"
@@ -31,6 +32,7 @@ var upgrader = websocket.Upgrader{
 type Server struct {
 	hub     *chat.Hub
 	store   *store.MessageStore
+	limiter *ratelimit.Limiter
 	log     *slog.Logger
 	mux     *http.ServeMux
 	addr    string
@@ -55,6 +57,7 @@ func New(addr string, dataDir string, log *slog.Logger) *Server {
 
 	s := &Server{
 		hub:     hub,
+		limiter: ratelimit.New(10, 20), // 10 msg/sec, burst 20
 		log:     log,
 		mux:     http.NewServeMux(),
 		addr:    addr,
@@ -132,6 +135,12 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Priority == "" {
 		req.Priority = types.PriorityNormal
+	}
+
+	// Rate limit per agent
+	if !s.limiter.Allow(req.Sender) {
+		http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+		return
 	}
 
 	msg := s.hub.SendMessage(req.Group, req.Sender, req.Body, req.Priority)
